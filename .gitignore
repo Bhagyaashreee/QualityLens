@@ -1,0 +1,40 @@
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache and byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing and coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Environment variables
+.env
+.env.local
+
+# Generated reports and exports
+reports/*.json
+reports/*.html
+reports/*.csv
+uploads/
+data/uploads/
+
+# Streamlit secrets and cache
+.streamlit/secrets.toml
+
+# IDE and Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db

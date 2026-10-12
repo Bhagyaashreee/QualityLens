@@ -1,0 +1,31 @@
+student_id,age,gpa,study_hours,major,enrollment_status
+1001,20,3.15,14.5,Computer Science,Full-Time
+1002,21,3.40,16.0,Data Science,Full-Time
+1003,22,2.90,12.0,Mathematics,Part-Time
+1004,20,3.25,15.0,Computer Science,Full-Time
+1005,21,3.50,18.0,Data Science,Full-Time
+1006,23,2.80,11.5,Physics,Part-Time
+1007,20,3.30,15.5,Computer Science,Full-Time
+1008,22,3.10,13.0,Mathematics,Full-Time
+1009,21,3.60,19.0,Data Science,Full-Time
+1010,20,3.05,14.0,Computer Science,Full-Time
+1011,22,2.95,12.5,Physics,Part-Time
+1012,21,3.45,16.5,Data Science,Full-Time
+1013,20,3.20,15.0,Computer Science,Full-Time
+1014,23,3.00,13.5,Mathematics,Part-Time
+1015,21,3.55,17.5,Data Science,Full-Time
+1016,20,3.10,14.0,Computer Science,Full-Time
+1017,22,3.35,16.0,Data Science,Full-Time
+1018,21,2.85,11.0,Physics,Part-Time
+1019,20,3.25,15.0,Computer Science,Full-Time
+1020,22,3.40,16.5,Mathematics,Full-Time
+1021,21,3.50,17.0,Data Science,Full-Time
+1022,20,3.15,14.5,Computer Science,Full-Time
+1023,23,2.90,12.0,Physics,Part-Time
+1024,21,3.60,18.5,Data Science,Full-Time
+1025,20,3.30,15.5,Computer Science,Full-Time
+1026,22,3.05,13.5,Mathematics,Full-Time
+1027,21,3.45,16.0,Data Science,Full-Time
+1028,20,3.20,15.0,Computer Science,Full-Time
+1029,22,2.85,11.5,Physics,Part-Time
+1030,21,3.55,17.5,Data Science,Full-Time

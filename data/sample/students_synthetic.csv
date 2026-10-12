@@ -1,0 +1,11 @@
+student_id,first_name,last_name,age,enrollment_status,gpa,major
+101,Amina,Diallo,20,Full-Time,3.85,Computer Science
+102,Liam,Chen,22,Part-Time,3.40,Data Science
+103,Elena,Rostova,21,Full-Time,3.90,Mathematics
+103,Elena,Rostova,21,Full-Time,3.90,Mathematics
+104,Mateo,Silva,,Full-Time,3.15,Physics
+105,Aarav,Patel,23,Full-Time,,Electrical Engineering
+106,Zoe,Kowalski,145,Full-Time,3.75,Biology
+107,Lucas,Moreau,19,Astronaut,2.95,Mechanical Engineering
+108,Sophia,,20,Part-Time,3.60,Economics
+109,Noah,Kim,24,Graduated,3.80,Computer Science
