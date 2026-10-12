@@ -308,3 +308,116 @@ def test_report_serialization_and_summary_text(clean_dataframe: pd.DataFrame) ->
     assert isinstance(text_summary, str)
     assert "QUALITYLENS DATA QUALITY AUDIT REPORT" in text_summary
     assert "100.0 / 100.0" in text_summary
+
+
+def test_manual_test_csv_unconfigured_rules_root_cause() -> None:
+    """Demonstrate root cause: without configured numeric ranges, custom uploads score 100/100."""
+    manual_df = pd.DataFrame({
+        "name": ["Alice", "Bob", "Charlie"],
+        "age": [20, 22, 145],
+        "score": [85, 90, 70],
+    })
+
+    # When no numeric_ranges are passed (default behavior of unconfigured custom upload)
+    engine = DataQualityEngine(missing_threshold=0.15)
+    report = engine.evaluate(manual_df)
+
+    assert report.overall_score == 100.0
+    warnings = [f for f in report.findings if f.severity == "WARNING"]
+    assert len(warnings) == 0
+    assert len(report.validation_summary["numeric_validations"]) == 0
+
+
+def test_manual_test_csv_with_configured_age_bounds() -> None:
+    """When user configures age bounds (16 to 100), Charlie's age 145 is flagged and score is penalized."""
+    manual_df = pd.DataFrame({
+        "name": ["Alice", "Bob", "Charlie"],
+        "age": [20, 22, 145],
+        "score": [85, 90, 70],
+    })
+
+    engine = DataQualityEngine(
+        missing_threshold=0.15,
+        numeric_ranges={"age": {"min": 16, "max": 100}},
+    )
+    report = engine.evaluate(manual_df)
+
+    # Score should be penalized due to value validity deduction
+    assert report.overall_score < 100.0
+    assert report.overall_score == 95.0
+
+    # Validation summary should accurately reflect Charlie's violation
+    age_val = report.validation_summary["numeric_validations"]["age"]
+    assert age_val["total_evaluated"] == 3
+    assert age_val["invalid_count"] == 1
+    assert age_val["invalid_percentage"] == 33.33
+    assert age_val["sample_violations"] == [145]
+    assert age_val["min_allowed"] == 16
+    assert age_val["max_allowed"] == 100
+
+    # Warning finding must be present
+    age_warnings = [
+        f for f in report.findings
+        if f.column == "age" and f.category == "value_validation" and f.severity == "WARNING"
+    ]
+    assert len(age_warnings) == 1
+    assert "1 numeric value(s) out of valid range [16, 100]" in age_warnings[0].message
+    assert age_warnings[0].details["samples"] == [145]
+
+
+def test_custom_csv_configurable_age_without_hardcoded_100_assumption() -> None:
+    """Engine must not assume age maximum is 100; user-defined bounds must dictate validity."""
+    df = pd.DataFrame({
+        "name": ["Alice", "Bob", "Charlie"],
+        "age": [20, 22, 145],
+        "score": [85, 90, 70],
+    })
+
+    # Case 1: Centenarian / historical study allows age up to 150
+    engine_wide = DataQualityEngine(
+        numeric_ranges={"age": {"min": 0, "max": 150}}
+    )
+    report_wide = engine_wide.evaluate(df)
+    assert report_wide.overall_score == 100.0
+    assert report_wide.validation_summary["numeric_validations"]["age"]["invalid_count"] == 0
+
+    # Case 2: Pediatric cohort where age max is 18 -> Alice (20), Bob (22), Charlie (145) all invalid
+    engine_pediatric = DataQualityEngine(
+        numeric_ranges={"age": {"min": 0, "max": 18}}
+    )
+    report_pediatric = engine_pediatric.evaluate(df)
+    ped_val = report_pediatric.validation_summary["numeric_validations"]["age"]
+    assert ped_val["invalid_count"] == 3
+    assert ped_val["invalid_percentage"] == 100.0
+    assert report_pediatric.overall_score < 100.0
+
+
+def test_custom_csv_multi_column_validation_and_reporting() -> None:
+    """Multiple configurable numeric ranges evaluate independently and report invalid samples."""
+    df = pd.DataFrame({
+        "name": ["Alice", "Bob", "Charlie"],
+        "age": [20, 22, 145],
+        "score": [85, 90, 70],
+    })
+
+    engine = DataQualityEngine(
+        numeric_ranges={
+            "age": {"min": 16, "max": 100},
+            "score": {"min": 0, "max": 80},  # Alice (85) and Bob (90) violate this
+        }
+    )
+    report = engine.evaluate(df)
+
+    num_vals = report.validation_summary["numeric_validations"]
+    assert "age" in num_vals
+    assert "score" in num_vals
+
+    assert num_vals["age"]["invalid_count"] == 1
+    assert num_vals["age"]["sample_violations"] == [145]
+
+    assert num_vals["score"]["invalid_count"] == 2
+    assert num_vals["score"]["sample_violations"] == [85, 90]
+
+    val_warnings = [f for f in report.findings if f.category == "value_validation"]
+    assert len(val_warnings) == 2
+

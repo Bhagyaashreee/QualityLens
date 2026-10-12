@@ -395,3 +395,105 @@ def format_drift_export(report: DriftReport, export_format: str = "csv") -> str:
         return df_drift.to_csv(index=False)
 
     return json.dumps(report.to_dict(), indent=2)
+
+
+def extract_out_of_bounds_rows(
+    df: pd.DataFrame,
+    column: str,
+    min_val: float | int | None = None,
+    max_val: float | int | None = None,
+) -> pd.DataFrame:
+    """Extract rows where a numeric column violates min/max bounds.
+
+    Args:
+        df: Input DataFrame.
+        column: Column name to evaluate.
+        min_val: Minimum allowed value (inclusive).
+        max_val: Maximum allowed value (inclusive).
+
+    Returns:
+        DataFrame containing only rows violating the bounds, or empty DataFrame.
+    """
+    if min_val is None and max_val is None:
+        return pd.DataFrame()
+
+    if column not in df.columns:
+        return pd.DataFrame()
+
+    series = df[column]
+    non_null = series.dropna()
+    if non_null.empty:
+        return pd.DataFrame()
+
+    numeric_vals = pd.to_numeric(non_null, errors="coerce")
+    coercion_failed = numeric_vals.isna()
+
+    out_of_bounds = pd.Series(False, index=non_null.index)
+    if min_val is not None:
+        out_of_bounds = out_of_bounds | (numeric_vals < min_val)
+    if max_val is not None:
+        out_of_bounds = out_of_bounds | (numeric_vals > max_val)
+
+    invalid_mask = coercion_failed | out_of_bounds
+    invalid_indices = non_null[invalid_mask].index
+    return df.loc[invalid_indices]
+
+
+def format_active_rules_explanation(
+    missing_threshold: float,
+    numeric_ranges: dict[str, dict[str, float | int | None]] | None = None,
+    expected_schema: dict[str, str] | None = None,
+    categorical_allowed: dict[str, Any] | None = None,
+) -> list[str]:
+    """Generate human-readable explanations of all active validation rules.
+
+    Args:
+        missing_threshold: Missing cell threshold ratio (0.0 - 1.0).
+        numeric_ranges: Optional dictionary of column min/max ranges.
+        expected_schema: Optional dictionary of expected column types.
+        categorical_allowed: Optional dictionary of allowed categorical values.
+
+    Returns:
+        List of formatted explanation strings describing active rules.
+    """
+    rules: list[str] = [
+        f"**Missing Value Threshold**: Columns with > {missing_threshold * 100:.1f}% missing cells are flagged."
+    ]
+
+    if numeric_ranges:
+        for col, bounds in numeric_ranges.items():
+            min_v = bounds.get("min")
+            max_v = bounds.get("max")
+            if min_v is not None and max_v is not None:
+                rules.append(
+                    f"**Numeric Range [`{col}`]**: Valid range is [{min_v}, {max_v}]. "
+                    f"Values < {min_v} or > {max_v} are flagged."
+                )
+            elif min_v is not None:
+                rules.append(
+                    f"**Numeric Range [`{col}`]**: Minimum allowed is {min_v}. "
+                    f"Values < {min_v} are flagged."
+                )
+            elif max_v is not None:
+                rules.append(
+                    f"**Numeric Range [`{col}`]**: Maximum allowed is {max_v}. "
+                    f"Values > {max_v} are flagged."
+                )
+    else:
+        rules.append("**Numeric Range Validation**: No numeric bounds configured (all numeric values accepted).")
+
+    if expected_schema:
+        cols_str = ", ".join(f"`{c}` ({t})" for c, t in expected_schema.items())
+        rules.append(f"**Expected Schema**: Contract enforces columns: {cols_str}.")
+    else:
+        rules.append("**Schema Conformance**: Flexible schema (no required column list enforced).")
+
+    if categorical_allowed:
+        for col, allowed in categorical_allowed.items():
+            vals_str = ", ".join(repr(v) for v in sorted(list(allowed)))
+            rules.append(f"**Categorical Domain [`{col}`]**: Allowed values: [{vals_str}].")
+    else:
+        rules.append("**Categorical Domain**: No categorical domain restrictions active.")
+
+    return rules
+

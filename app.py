@@ -24,6 +24,8 @@ from src.dashboard_utils import (
     build_categorical_drift_chart,
     format_quality_export,
     format_drift_export,
+    format_active_rules_explanation,
+    extract_out_of_bounds_rows,
 )
 
 # -----------------------------------------------------------------------------
@@ -129,7 +131,7 @@ def render_quality_audit_view() -> None:
         unsafe_allow_html=True,
     )
 
-    col_input, col_config = st.columns([1.2, 1])
+    col_input, col_config = st.columns([1.1, 1.3])
 
     with col_input:
         st.markdown("#### 1. Dataset Input")
@@ -143,24 +145,7 @@ def render_quality_audit_view() -> None:
         if not use_sample:
             uploaded_file = st.file_uploader("Upload CSV Dataset", type=["csv"])
 
-    with col_config:
-        st.markdown("#### 2. Audit Rules & Thresholds")
-        with st.expander("Configure Validation Parameters", expanded=False):
-            missing_threshold = st.slider(
-                "Missing Values Threshold per Column (%)",
-                min_value=1,
-                max_value=50,
-                value=15,
-                step=1,
-                help="Columns with missing percentage exceeding this threshold are flagged.",
-            ) / 100.0
-
-            enable_student_schema = st.checkbox(
-                "Apply Student Domain Schema & Bounds (Recommended for Sample Data)",
-                value=use_sample,
-            )
-
-    # Load DataFrame
+    # Load DataFrame safely
     df: pd.DataFrame | None = None
     err_msg: str | None = None
 
@@ -172,44 +157,169 @@ def render_quality_audit_view() -> None:
     elif uploaded_file is not None:
         df, err_msg = load_csv_safely(uploaded_file)
     else:
-        st.info("👋 Upload a CSV file or check 'Load built-in synthetic student dataset' to begin.")
+        with col_config:
+            st.markdown("#### 2. Audit Rules & Thresholds")
+            st.info("👋 Upload a CSV file or check 'Load built-in synthetic student dataset' to begin.")
         return
 
     if err_msg:
-        st.error(f"❌ {err_msg}")
+        with col_config:
+            st.markdown("#### 2. Audit Rules & Thresholds")
+            st.error(f"❌ {err_msg}")
         return
 
     if df is None or df.empty:
-        st.warning("⚠️ The loaded dataset is empty (0 records).")
+        with col_config:
+            st.markdown("#### 2. Audit Rules & Thresholds")
+            st.warning("⚠️ The loaded dataset is empty (0 records).")
         return
 
     # Prepare Engine Configurations
-    expected_schema = None
-    numeric_ranges = None
-    categorical_allowed = None
+    expected_schema: dict[str, str] | None = None
+    numeric_ranges: dict[str, dict[str, float | int | None]] = {}
+    categorical_allowed: dict[str, Any] | None = None
 
-    if enable_student_schema:
-        expected_schema = {
-            "student_id": "int",
-            "first_name": "string",
-            "last_name": "string",
-            "age": "numeric",
-            "enrollment_status": "string",
-            "gpa": "numeric",
-            "major": "string",
-        }
-        numeric_ranges = {
-            "age": {"min": 16, "max": 100},
-            "gpa": {"min": 0.0, "max": 4.0},
-        }
-        categorical_allowed = {
-            "enrollment_status": ["Full-Time", "Part-Time", "Graduated", "On Leave"]
-        }
+    with col_config:
+        st.markdown("#### 2. Audit Rules & Thresholds")
+        with st.expander("Configure Validation Parameters", expanded=(not use_sample)):
+            missing_threshold = st.slider(
+                "Missing Values Threshold per Column (%)",
+                min_value=1,
+                max_value=50,
+                value=15,
+                step=1,
+                help="Columns with missing percentage exceeding this threshold are flagged.",
+            ) / 100.0
+
+            enable_student_schema = False
+            if use_sample:
+                enable_student_schema = st.checkbox(
+                    "Apply Student Domain Schema & Bounds (Recommended for Sample Data)",
+                    value=True,
+                )
+                if enable_student_schema:
+                    expected_schema = {
+                        "student_id": "int",
+                        "first_name": "string",
+                        "last_name": "string",
+                        "age": "numeric",
+                        "enrollment_status": "string",
+                        "gpa": "numeric",
+                        "major": "string",
+                    }
+                    numeric_ranges = {
+                        "age": {"min": 16, "max": 100},
+                        "gpa": {"min": 0.0, "max": 4.0},
+                    }
+                    categorical_allowed = {
+                        "enrollment_status": ["Full-Time", "Part-Time", "Graduated", "On Leave"]
+                    }
+
+            # Custom validation rules for uploaded CSV or when sample schema is disabled
+            if not use_sample or not enable_student_schema:
+                candidate_numeric_cols = [
+                    str(c)
+                    for c in df.columns
+                    if pd.api.types.is_numeric_dtype(df[c])
+                    or pd.to_numeric(df[c], errors="coerce").notna().any()
+                ]
+
+                st.markdown("---")
+                st.markdown("##### 📏 Numeric Range Validation")
+                st.caption(
+                    "Configure acceptable bounds [min, max] for numeric columns in your uploaded dataset. "
+                    "Values outside bounds will be flagged as warnings and deducted from the quality score."
+                )
+
+                if candidate_numeric_cols:
+                    selected_range_cols = st.multiselect(
+                        "Select columns to validate ranges:",
+                        options=candidate_numeric_cols,
+                        default=[],
+                        help="Choose columns to validate against minimum and/or maximum bounds.",
+                    )
+
+                    for col in selected_range_cols:
+                        st.markdown(f"**Bounds for `{col}`**")
+                        obs_series = pd.to_numeric(df[col], errors="coerce").dropna()
+                        obs_min = f"{float(obs_series.min()):g}" if not obs_series.empty else "N/A"
+                        obs_max = f"{float(obs_series.max()):g}" if not obs_series.empty else "N/A"
+                        is_int = pd.api.types.is_integer_dtype(df[col])
+                        step_val = 1.0 if is_int else 0.1
+
+                        c_min, c_max = st.columns(2)
+                        min_input = c_min.number_input(
+                            f"Min allowed ({col})",
+                            value=None,
+                            step=step_val,
+                            key=f"custom_min_{col}",
+                            placeholder="None (no min)",
+                            help=f"Observed in dataset: min = {obs_min}",
+                        )
+                        max_input = c_max.number_input(
+                            f"Max allowed ({col})",
+                            value=None,
+                            step=step_val,
+                            key=f"custom_max_{col}",
+                            placeholder="None (no max)",
+                            help=f"Observed in dataset: max = {obs_max}",
+                        )
+
+                        if min_input is not None and max_input is not None and min_input > max_input:
+                            st.error(f"⚠️ Min ({min_input}) cannot be greater than Max ({max_input}) for '{col}'!")
+                        else:
+                            bounds: dict[str, float | int | None] = {}
+                            if min_input is not None:
+                                bounds["min"] = min_input
+                            if max_input is not None:
+                                bounds["max"] = max_input
+                            if bounds:
+                                numeric_ranges[col] = bounds
+                else:
+                    st.caption("No numeric columns detected in this dataset.")
+
+                # Optional categorical allowed values
+                candidate_cat_cols = [
+                    str(c)
+                    for c in df.columns
+                    if c not in candidate_numeric_cols or df[c].dtype == "object"
+                ]
+                if candidate_cat_cols:
+                    with st.expander("🏷️ Categorical Allowed Values (Optional)", expanded=False):
+                        selected_cat_cols = st.multiselect(
+                            "Select categorical columns:",
+                            options=candidate_cat_cols,
+                            default=[],
+                            key="cat_cols_select",
+                        )
+                        for c_col in selected_cat_cols:
+                            allowed_text = st.text_input(
+                                f"Allowed values for `{c_col}` (comma-separated):",
+                                key=f"cat_vals_{c_col}",
+                                placeholder="e.g. Active, Inactive, Pending",
+                            )
+                            if allowed_text.strip():
+                                parsed_vals = [v.strip() for v in allowed_text.split(",") if v.strip()]
+                                if categorical_allowed is None:
+                                    categorical_allowed = {}
+                                categorical_allowed[c_col] = parsed_vals
+
+        # Active Rules Explanation in config panel
+        active_rules_list = format_active_rules_explanation(
+            missing_threshold=missing_threshold,
+            numeric_ranges=numeric_ranges if numeric_ranges else None,
+            expected_schema=expected_schema,
+            categorical_allowed=categorical_allowed,
+        )
+
+        with st.expander("📌 Active Validation Rules", expanded=True):
+            for rule_text in active_rules_list:
+                st.markdown(f"- {rule_text}")
 
     engine = DataQualityEngine(
         missing_threshold=missing_threshold,
         expected_schema=expected_schema,
-        numeric_ranges=numeric_ranges,
+        numeric_ranges=numeric_ranges if numeric_ranges else None,
         categorical_allowed_values=categorical_allowed,
     )
 
@@ -259,6 +369,10 @@ def render_quality_audit_view() -> None:
     st.markdown("#### 3. Score Breakdown & Audit Findings")
     st.info(f"💡 **Scoring Explanation**: {report.score_summary.get('explanation', '')}")
 
+    with st.expander("📋 View Active Rules & Validation Contracts", expanded=False):
+        for r_text in active_rules_list:
+            st.markdown(f"- {r_text}")
+
     tab_err, tab_warn, tab_info, tab_raw = st.tabs(
         [
             f"Errors ({len(grouped_findings['ERROR'])})",
@@ -279,6 +393,24 @@ def render_quality_audit_view() -> None:
         if grouped_findings["WARNING"]:
             for f in grouped_findings["WARNING"]:
                 st.warning(f"**[{f.category.upper()}]** {f.message}")
+                if f.category == "value_validation" and f.column:
+                    samples = f.details.get("samples") or f.details.get("unexpected_values")
+                    if samples:
+                        st.markdown(
+                            f"&nbsp;&nbsp;&nbsp;&nbsp;🚩 **Detected Invalid Sample Values**: "
+                            f"`{', '.join(str(s) for s in samples)}`"
+                        )
+                    if f.column in df.columns:
+                        bounds = (numeric_ranges or {}).get(f.column, {})
+                        invalid_rows = extract_out_of_bounds_rows(
+                            df, f.column, min_val=bounds.get("min"), max_val=bounds.get("max")
+                        )
+                        if not invalid_rows.empty:
+                            with st.expander(
+                                f"🔍 Inspect {len(invalid_rows)} Invalid Record(s) in `{f.column}`",
+                                expanded=True,
+                            ):
+                                st.dataframe(invalid_rows, width="stretch")
         else:
             st.success("No warnings detected.")
 

@@ -27,6 +27,8 @@ from src.dashboard_utils import (
     build_categorical_drift_chart,
     format_quality_export,
     format_drift_export,
+    extract_out_of_bounds_rows,
+    format_active_rules_explanation,
 )
 from src.quality_engine import DataQualityEngine
 from src.drift_engine import DataDriftEngine
@@ -213,3 +215,59 @@ def test_apply_dark_theme_helper() -> None:
     assert styled_fig.layout.xaxis.gridcolor == "#2D3748"
     assert styled_fig.layout.yaxis.gridcolor == "#2D3748"
     assert styled_fig.layout.xaxis.tickfont.color == "#94A3B8"
+
+
+def test_extract_out_of_bounds_rows() -> None:
+    """Helper should accurately isolate records violating numeric bounds."""
+    df = pd.DataFrame({
+        "name": ["Alice", "Bob", "Charlie"],
+        "age": [20, 22, 145],
+        "score": [85, 90, 70],
+    })
+
+    # Age between 16 and 100 flags Charlie (145)
+    invalid_age = extract_out_of_bounds_rows(df, "age", min_val=16, max_val=100)
+    assert len(invalid_age) == 1
+    assert invalid_age.iloc[0]["name"] == "Charlie"
+    assert invalid_age.iloc[0]["age"] == 145
+
+    # Age between 16 and 150 flags nothing
+    valid_age = extract_out_of_bounds_rows(df, "age", min_val=16, max_val=150)
+    assert len(valid_age) == 0
+
+    # Score max 80 flags Alice (85) and Bob (90)
+    invalid_score = extract_out_of_bounds_rows(df, "score", min_val=0, max_val=80)
+    assert len(invalid_score) == 2
+    assert list(invalid_score["name"]) == ["Alice", "Bob"]
+
+    # Edge cases
+    assert extract_out_of_bounds_rows(df, "nonexistent", min_val=0, max_val=10).empty
+    assert extract_out_of_bounds_rows(df, "age", min_val=None, max_val=None).empty
+    assert extract_out_of_bounds_rows(pd.DataFrame(), "age", min_val=10, max_val=50).empty
+
+
+def test_format_active_rules_explanation() -> None:
+    """Helper should generate clear, transparent explanations of all active validation rules."""
+    # Configured rules
+    rules = format_active_rules_explanation(
+        missing_threshold=0.15,
+        numeric_ranges={"age": {"min": 16, "max": 100}, "score": {"min": 0, "max": 100}},
+        expected_schema={"name": "string", "age": "numeric"},
+        categorical_allowed={"status": ["Active", "Pending"]},
+    )
+    explanation = "\n".join(rules)
+    assert "15.0%" in explanation
+    assert "age" in explanation
+    assert "[16, 100]" in explanation
+    assert "score" in explanation
+    assert "Expected Schema" in explanation
+    assert "status" in explanation
+
+    # Default / unconfigured rules
+    default_rules = format_active_rules_explanation(missing_threshold=0.20)
+    default_text = "\n".join(default_rules)
+    assert "20.0%" in default_text
+    assert "No numeric bounds configured" in default_text
+    assert "Flexible schema" in default_text
+    assert "No categorical domain restrictions active" in default_text
+
